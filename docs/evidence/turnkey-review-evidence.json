@@ -1,0 +1,110 @@
+{
+  "kind": "isolated turnkey orchestration review; stub compiler/build, real child processes and Node test runner",
+  "fixture": "C:\\Users\\GreenPC\\Documents\\Codex\\2026-11-01\\new-chat\\work\\turnkey-review-fBq7Sa",
+  "checkedAt": "2026-11-01T15:10:15.521Z",
+  "node": "v24.22.1",
+  "checks": [
+    {
+      "args": [
+        "--help"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--not-a-command"
+      ],
+      "exitCode": 2
+    },
+    {
+      "args": [
+        "--next"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 1
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "status"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--next"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 1
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 0
+    },
+    {
+      "args": [
+        "check"
+      ],
+      "exitCode": 1
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 1
+    },
+    {
+      "args": [
+        "check"
+      ],
+      "exitCode": 1
+    },
+    {
+      "args": [
+        "--resume"
+      ],
+      "exitCode": 1
+    }
+  ]
+}
