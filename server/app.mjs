@@ -18,6 +18,9 @@ const TRANSLATION_LOCALES = ['en', 'zh-TW'];
 const TRANSLATION_FIELDS = ['title', 'summary', 'startPoint'];
 const REPORT_TABLES = Object.freeze({ message: 'messages', post: 'posts', comment: 'comments' });
 const WRITE_METHODS = new Set(['POST', 'PATCH', 'DELETE', 'PUT']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const DEVELOPMENT_ORIGINS = ['http://127.0.0.1:5173', 'http://localhost:5173'];
+const MAX_JSON_BYTES = 32768;
 const sourceFingerprint = data => hashToken(JSON.stringify(SOURCE_KEYS.map(key => [key, data[key] ?? null])));
 const translationFingerprint = data => hashToken(JSON.stringify([sourceFingerprint(data), TRANSLATION_LOCALES.map(locale => TRANSLATION_FIELDS.map(key => data.translations?.[locale]?.[key] ?? ''))]));
 const translationsComplete = data => TRANSLATION_LOCALES.every(locale => TRANSLATION_FIELDS.every(key => typeof data.translations?.[locale]?.[key] === 'string' && data.translations[locale][key].trim()));
@@ -59,25 +62,72 @@ function cookieToken(req) {
 }
 async function readJson(req) {
   if ((req.headers['content-type'] ?? '').toLowerCase().split(';')[0].trim() !== 'application/json') fail(415, 'json_required', 'JSON 요청이 필요합니다.');
-  if (Number(req.headers['content-length'] ?? 0) > 32768) fail(413, 'body_too_large', '요청이 너무 큽니다.');
+  if (Number(req.headers['content-length'] ?? 0) > MAX_JSON_BYTES) fail(413, 'body_too_large', '요청이 너무 큽니다.');
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 32768) fail(413, 'body_too_large', '요청이 너무 큽니다.'); chunks.push(chunk); }
+  // Keep the connection available to send a 413 after a chunked body exceeds the limit.
+  for await (const chunk of req.iterator({ destroyOnReturn: false })) {
+    size += chunk.length;
+    if (size > MAX_JSON_BYTES) {
+      req.resume();
+      fail(413, 'body_too_large', '요청이 너무 큽니다.');
+    }
+    chunks.push(chunk);
+  }
   let body;
   try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { bad('유효한 JSON이 필요합니다.'); }
   if (!body || Array.isArray(body) || typeof body !== 'object') bad('JSON 객체가 필요합니다.');
   return body;
 }
 
-/** Local HTTP application backed by SQLite or PostgreSQL. */
-export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), databaseUrl, sslCaPath, database, distDir = resolve(ROOT, 'dist'), now = () => Date.now(), allowedOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173'], sessionTtlMs = 12 * 60 * 60 * 1000, secureCookies = false, maxConditionValidityMs = 24 * 60 * 60 * 1000, onError = null } = {}) {
+function parseAuthority(value, protocol) {
+  if (typeof value !== 'string' || value.length > 260) return null;
+  const match = /^(\[[a-f\d:.]+\]|[a-z\d.-]+)(?::(\d{1,5}))?$/i.exec(value);
+  if (!match || match[0] !== value || (match[2] && Number(match[2]) === 0)) return null;
+  const rawHostname = match[1].toLowerCase();
+  if (!rawHostname.startsWith('[') && rawHostname.split('.').some(label => !/^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/.test(label))) return null;
+  try {
+    const url = new URL(`${protocol}//${value}`);
+    // URL validates bracketed IPv6. Require canonical IPv4 and DNS names.
+    return rawHostname.startsWith('[') || url.hostname === rawHostname ? url : null;
+  } catch { return null; }
+}
+
+function parseOrigin(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^(https?):\/\/(.+)$/i.exec(value);
+  return match?.[0] === value ? parseAuthority(match[2], `${match[1].toLowerCase()}:`)?.origin ?? null : null;
+}
+
+/** HTTP application backed by SQLite or PostgreSQL. */
+export function createApp({
+  dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), databaseUrl, sslCaPath, database,
+  distDir = resolve(ROOT, 'dist'), now = () => Date.now(), deploymentMode = 'local',
+  allowedHosts = [], allowedOrigins = deploymentMode === 'local' ? DEVELOPMENT_ORIGINS : [],
+  clientIp = req => req.socket?.remoteAddress ?? 'local',
+  sessionTtlMs = 12 * 60 * 60 * 1000, secureCookies = deploymentMode === 'hosted',
+  maxConditionValidityMs = 24 * 60 * 60 * 1000, onError = null,
+} = {}) {
   // Local pilot input bound, not a claim about the freshness of real trail conditions.
   if (!Number.isSafeInteger(maxConditionValidityMs) || maxConditionValidityMs <= 0 || maxConditionValidityMs > 7 * 24 * 60 * 60 * 1000) throw new Error('Condition validity policy must be positive and at most seven days.');
+  if (!['local', 'hosted'].includes(deploymentMode)) throw new Error('Unsupported deployment mode.');
+  const hosted = deploymentMode === 'hosted';
+  if (hosted && (!secureCookies || allowedHosts.length === 0)) throw new Error('Hosted mode requires an explicit HTTPS host allowlist and secure cookies.');
+  const protocol = secureCookies ? 'https:' : 'http:';
+  const knownHosts = new Set(allowedHosts.map(value => {
+    const url = parseAuthority(value, protocol);
+    if (!url) throw new Error('Allowed hosts must be exact hostnames with an optional port.');
+    return url.host;
+  }));
+  const knownOrigins = new Set(allowedOrigins.map(value => {
+    const origin = parseOrigin(value);
+    if (!origin || (hosted && !origin.startsWith('https://'))) throw new Error('Invalid allowed origin.');
+    return origin;
+  }));
   const db = database ?? openAppDatabase({ dbPath, databaseUrl, sslCaPath });
   const usernameKey = db.dialect === 'postgresql' ? 'lower(username)' : 'username';
   const time = () => Number(now());
   const iso = () => new Date(time()).toISOString();
   const limitBuckets = new Map();
-  const knownOrigins = new Set(allowedOrigins);
   let closed = false;
 
   function rate(key, max, windowMs) {
@@ -203,7 +253,7 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
 
   async function prepareCredentials(req, path, body) {
     if (req.method !== 'POST' || (path !== '/auth/register' && path !== '/auth/login')) return;
-    const ip = req.socket.remoteAddress ?? 'local';
+    const ip = clientIp(req);
     if (path === '/auth/register') {
       rate(`register:${ip}`, 10, 60 * 60 * 1000);
       const username = textValue(body.username, '사용자명', 32, 3).toLowerCase();
@@ -229,7 +279,7 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
   async function api(req, path, url, body, credentials, response) {
     const method = req.method;
     const segments = path.split('/').filter(Boolean);
-    if (method === 'GET' && path === '/health') return { ok: true, mode: 'local', contentMode: 'unverified', storage: db.dialect, transport: 'authorized-polling', retentionConfigured: false };
+    if (method === 'GET' && path === '/health') return { ok: true, mode: deploymentMode, contentMode: 'unverified', storage: db.dialect, transport: 'authorized-polling', retentionConfigured: false };
     if (method === 'GET' && path === '/session') return { user: publicUser(await auth(req)) };
     if (method === 'POST' && path === '/auth/register') {
       const { username, displayName, salt, hashed } = credentials;
@@ -386,7 +436,7 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
         const canModerate = capabilities.includes('moderation');
         const openReports = canModerate ? await db.prepare("SELECT count(*) AS count FROM reports WHERE status='open'").get() : null;
         // Counts are only returned for the corresponding management capability.
-        return { counts: { users: canModerate ? await count('users') : null, courses: capabilities.includes('content') ? await count('courses') : null, reports: canModerate ? await count('reports') : null, openReports: openReports?.count ?? null, messages: canModerate ? await count('messages') : null }, capabilities, contentMode: 'unverified', mode: 'local', retentionConfigured: false, measuredAt: iso() };
+        return { counts: { users: canModerate ? await count('users') : null, courses: capabilities.includes('content') ? await count('courses') : null, reports: canModerate ? await count('reports') : null, openReports: openReports?.count ?? null, messages: canModerate ? await count('messages') : null }, capabilities, contentMode: 'unverified', mode: deploymentMode, retentionConfigured: false, measuredAt: iso() };
       }
       if (path === '/admin/courses') {
         const user = await requireCapability(req, 'content');
@@ -476,14 +526,19 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
   }
 
   function verifyRequest(req) {
-    let host; try { host = new URL(`http://${req.headers.host}`).hostname; } catch { fail(400, 'invalid_host', '올바른 호스트가 필요합니다.'); }
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(host)) fail(403, 'invalid_host', '로컬 호스트에서만 사용할 수 있습니다.');
+    const host = parseAuthority(req.headers.host, protocol);
+    if (!host) fail(400, 'invalid_host', '올바른 호스트가 필요합니다.');
+    const allowed = knownHosts.has(host.host) || (!hosted && LOOPBACK_HOSTS.has(host.hostname));
+    if (!allowed) fail(403, 'invalid_host', '허용된 호스트가 아닙니다.');
     if (WRITE_METHODS.has(req.method)) {
-      const origin = req.headers.origin;
-      const selfOrigin = `${secureCookies ? 'https' : 'http'}://${req.headers.host}`;
-      if (origin && origin !== selfOrigin && !knownOrigins.has(origin)) fail(403, 'origin_rejected', '다른 출처의 변경 요청은 허용되지 않습니다.');
+      const originHeader = req.headers.origin;
+      if (originHeader !== undefined) {
+        const origin = parseOrigin(originHeader);
+        if (origin !== host.origin && (hosted || !knownOrigins.has(origin))) fail(403, 'origin_rejected', '다른 출처의 변경 요청은 허용되지 않습니다.');
+      }
       if (req.headers['sec-fetch-site'] === 'cross-site') fail(403, 'origin_rejected', '다른 사이트의 변경 요청은 허용되지 않습니다.');
     }
+    return host.origin;
   }
   function sendJson(res, status, value) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value));
@@ -500,11 +555,12 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
     res.writeHead(200, { 'Content-Type': types[extname(target)] ?? 'application/octet-stream', 'Cache-Control': extname(target) === '.html' ? 'no-store' : 'public,max-age=3600', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" });
     res.end(req.method === 'HEAD' ? undefined : content);
   }
-  const server = createServer(async (req, res) => {
+  async function handleRequest(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); res.setHeader('X-Frame-Options', 'DENY');
     try {
-      verifyRequest(req);
-      const url = new URL(req.url, `http://${req.headers.host}`);
+      const origin = verifyRequest(req);
+      let url; try { url = new URL(req.url, origin); } catch { bad('URL 형식이 올바르지 않습니다.'); }
+      if (url.origin !== origin) bad('URL 형식이 올바르지 않습니다.');
       let pathname; try { pathname = decodeURIComponent(url.pathname); } catch { bad('URL 형식이 올바르지 않습니다.'); }
       if (pathname.includes('\0') || pathname.includes('\\')) bad('URL 형식이 올바르지 않습니다.');
       if (pathname === '/api' || pathname.startsWith('/api/')) {
@@ -523,9 +579,10 @@ export function createApp({ dbPath = resolve(ROOT, 'data/kj-trail.sqlite'), data
       if (!res.headersSent) sendJson(res, error instanceof ApiError ? error.status : 500, { error: error instanceof ApiError ? error.message : '서버 처리에 실패했습니다. 다시 시도해 주세요.', code: error instanceof ApiError ? error.code : 'internal_error' });
       else res.end();
     }
-  });
+  }
+  const server = createServer(handleRequest);
   server.requestTimeout = 15000; server.headersTimeout = 10000; server.keepAliveTimeout = 5000;
-  return { db: db.raw ?? db, server,
+  return { db: db.raw ?? db, server, handleRequest,
     async listen(port = 8787, host = '127.0.0.1') {
       await db.ready();
       return new Promise((resolveListen, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolveListen(server.address()); }); });

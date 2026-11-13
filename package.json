@@ -1,6 +1,12 @@
 {
-  "name": "kj-trail", "version": "0.1.0", "private": true, "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "name": "kj-trail",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:client": "vite --configLoader native --host 127.0.0.1",
@@ -14,6 +20,20 @@
     "grant-admin": "node server/cli.mjs grant-admin",
     "turnkey": "node scripts/turnkey.mjs"
   },
-  "dependencies": { "react": "^19.2.0", "react-dom": "^19.2.0", "lucide-react": "^0.468.0", "pg": "8.23.1" },
-  "devDependencies": { "@types/react": "^19.2.0", "@types/react-dom": "^19.2.0", "@vitejs/plugin-react": "^5.1.0", "typescript": "^5.9.3", "vite": "^7.2.0", "@types/node": "^24.0.0", "@electric-sql/pglite": "0.5.16" }
+  "dependencies": {
+    "@vercel/functions": "3.11.2",
+    "lucide-react": "^0.468.0",
+    "pg": "8.23.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
+  }
 }

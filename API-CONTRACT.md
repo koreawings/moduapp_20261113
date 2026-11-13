@@ -1,6 +1,6 @@
 # API v1
 
-All endpoints under `/api`, JSON; errors `{error: string, code: string}` with non-2xx. GET /health returns `{ok, mode:'local', contentMode:'unverified', storage:'sqlite'|'postgresql'}`. Client fetch uses same-origin cookie. POST/PATCH/DELETE JSON, Origin validated when present. Dates ISO UTC. Entity versions integers. IDs opaque strings. User `{id,username,displayName,role:'member'|'content'|'moderator'|'admin',suspended:boolean}`.
+All endpoints under `/api`, JSON; errors `{error: string, code: string}` with non-2xx. GET /health returns `{ok, mode:'local'|'hosted', contentMode:'unverified', storage:'sqlite'|'postgresql'}`. Client fetch uses same-origin cookie. POST/PATCH/DELETE JSON, Origin validated when present. Dates ISO UTC. Entity versions integers. IDs opaque strings. User `{id,username,displayName,role:'member'|'content'|'moderator'|'admin',suspended:boolean}`.
 
 Auth: GET /session -> `{user: User|null}`; POST /auth/register `{username,displayName,password}` and POST /auth/login `{username,password}` -> `{user}` + HttpOnly cookie. POST /auth/logout -> `{ok:true}`. Register only member. Password >=12 chars. Local CLI grants admin to registered account.
 
@@ -32,5 +32,9 @@ End-to-end customer measurements, payment, hosted delivery and independent real-
 
 ## PostgreSQL persistence
 
-DATABASE_URL selects PostgreSQL; an unavailable database fails startup rather than silently changing storage. Response shapes and custom session authentication stay the same. Each API request uses one connection and transaction; mutations, version checks and audit records commit together before a success response or session cookie is sent. Database operations are asynchronous. The private kj_trail schema is installed separately from db/schema.sql. Runtime kj_trail_backend permissions do not allow schema creation. PostgreSQL BIGINT values are checked before conversion to safe JSON numbers. SQLite remains available when DATABASE_URL is empty.
+DATABASE_URL selects PostgreSQL; an unavailable database fails startup rather than silently changing storage. Response shapes and custom session authentication stay the same. Each API request uses one connection and transaction; mutations, version checks and audit records commit together before a success response or session cookie is sent. Database operations are asynchronous. The private kj_trail schema is installed separately from db/schema.sql. Runtime kj_trail_backend permissions do not allow schema creation. PostgreSQL BIGINT values are checked before conversion to safe JSON numbers. SQLite remains available locally when DATABASE_URL is empty.
+
+## Vercel hosted entrypoint
+
+`api/index.js` awaits the shared request handler without listening on a socket. Hosted mode requires PostgreSQL; missing configuration or initial connection failure returns JSON 503 and never creates SQLite storage. Health and admin overview report `mode:'hosted'`. Exact deployment hosts are allowlisted, present mutation Origin must match the request's HTTPS origin, and session cookies add Secure. Only Vercel's platform-provided `x-vercel-forwarded-for` supplies the rate-limit client IP; limits remain per instance. Request bodies stay bounded to 32 KiB. See [deployment configuration](docs/vercel.md).
 

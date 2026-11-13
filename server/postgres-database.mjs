@@ -33,7 +33,7 @@ function placeholders(sql) {
   return sql.replace(tokens, token => token === '?' ? `$${++index}` : token);
 }
 
-function connectionPool(databaseUrl, sslCaPath) {
+function connectionPool(databaseUrl, sslCaPath, maxConnections) {
   let parsed;
   try { parsed = new URL(databaseUrl); }
   catch { throw new Error('DATABASE_URL must be a valid PostgreSQL connection URL.'); }
@@ -65,6 +65,8 @@ function connectionPool(databaseUrl, sslCaPath) {
     password,
     database,
     ssl,
+    max: maxConnections,
+    idleTimeoutMillis: 5000,
     connectionTimeoutMillis: 10000,
     application_name: 'kj-trail',
   });
@@ -74,7 +76,13 @@ function connectionPool(databaseUrl, sslCaPath) {
   return pool;
 }
 
-export function createPostgresDatabase({ databaseUrl, sslCaPath, pool = connectionPool(databaseUrl, sslCaPath) } = {}) {
+export function createPostgresDatabase({ databaseUrl, sslCaPath, maxConnections = 10, onPool,
+  pool = connectionPool(databaseUrl, sslCaPath, maxConnections) } = {}) {
+  try { onPool?.(pool); }
+  catch (error) {
+    void pool.end().catch(() => {});
+    throw error;
+  }
   const owner = {};
   let initialization;
   let closing;

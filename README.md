@@ -1,14 +1,14 @@
-# KJ Trail — 로컬 웹앱
+# KJ Trail — 웹앱
 
 소스 저장소: [koreawings/moduapp_20261113](https://github.com/koreawings/moduapp_20261113)
 
-금정산 관광·코스 탐색과 웹앱 내부 커뮤니티를 함께 검토하는 **풀스택 앱**입니다. React 화면이 Node HTTP API·회원 세션과 연결됩니다. `DATABASE_URL`이 있으면 Supabase PostgreSQL에 저장하고, 비어 있으면 로컬 SQLite를 사용합니다. 서버는 기본적으로 이 PC에서만 접근할 수 있습니다.
+금정산 관광·코스 탐색과 웹앱 내부 커뮤니티를 함께 검토하는 **풀스택 앱**입니다. React 화면이 Node HTTP API·회원 세션과 연결됩니다. 로컬 실행에서는 `DATABASE_URL`이 있으면 PostgreSQL, 없으면 SQLite를 사용합니다. Vercel 배포에서는 PostgreSQL이 필수이며 `/api` 함수가 기존 회원·저장 기능을 제공합니다.
 
 기본 운영 코스는 비어 있습니다. 별도 가상 예시는 화면 검토용이며 실제 산행·교통·안전 안내 또는 출발 추천으로 사용할 수 없습니다. 시험·코드 통과와 공개 운영 준비는 별도로 기록합니다.
 
 ## 처음 실행하기
 
-준비: **Node.js 24 이상**과 npm. PowerShell에서 이 폴더를 연 뒤 실행합니다.
+준비: **Node.js 24.x**와 npm. PowerShell에서 이 폴더를 연 뒤 실행합니다.
 
 ```powershell
 node --version
@@ -66,6 +66,8 @@ PostgreSQL 테스트는 메모리 내의 격리된 PostgreSQL 엔진에 실제 p
 
 ## 회원과 관리자
 
+Vercel 배포는 아래 [Vercel 배포](#vercel-배포)와 [배포 안내](docs/vercel.md)를 참고하세요. 관리 권한 부여는 배포와 같은 DB를 사용하는 로컬 CLI에서 실행합니다.
+
 1. 화면에서 본인이 사용할 계정을 등록합니다. 사용자명은 영문·숫자로 시작하는 3~32자이며 이후 밑줄·점·하이픈도 허용합니다. 비밀번호는 12자 이상입니다.
 2. 관리자 권한이 필요한 계정에 한해 이 PC의 별도 터미널에서 실행합니다. `your-username`은 방금 등록한 실제 사용자명으로 바꿉니다.
 
@@ -90,6 +92,17 @@ npm run grant-admin -- your-username
 게시물 댓글은 숨김·차단을 제외한 최근 최대 100개를 표시합니다. 더 오래된 댓글을 불러오는 기능은 아직 없습니다. 방이 잠긴 뒤에도 이미 저장된 동일 메시지의 재시도 응답은 현재 권한 내에서 받을 수 있지만 새 메시지는 보낼 수 없습니다.
 
 코스 원문·번역 변경은 초안 저장 후 별도로 승인합니다. 현재는 같은 운영자가 저장과 승인을 할 수 있는 로컬 모드입니다. 개방 상태의 유효기한에는 기본 24시간 기술 상한이 있으며, 이 시간이 현장 상태나 안전을 보장하지 않습니다. 만료된 개방 상태는 확인 필요로 바뀌고 추천에서 제외됩니다. 공개 운영 전에는 실제 검토와 운영 정책을 확정해야 합니다.
+
+## Vercel 배포
+
+1. Vercel에서 `koreawings/moduapp_20261113`의 `main`을 가져옵니다. Root Directory는 저장소 루트입니다.
+2. Environment Variables에 `DATABASE_URL`과 `DATABASE_SSL_CA=certs/supabase-ca.crt`를 등록합니다. `DATABASE_URL`에는 Supabase **Transaction pooler(6543)**와 `kj_trail_backend.PROJECT_REF` 전용 계정을 사용합니다. 실제 비밀번호가 포함된 값은 Git에 넣지 않습니다.
+3. Deploy 또는 Redeploy를 실행합니다. `vercel.json`이 Vite 빌드, `dist`, API 연결, CA 파일 포함을 설정합니다. Node.js는 24.x로 고정되어 있습니다.
+4. 배포 주소의 `/api/health`에서 `mode: "hosted"`, `storage: "postgresql"`, `ok: true`를 확인하고 회원가입·로그인·저장을 확인합니다.
+
+Vercel의 현재 배포 URL, 운영 대표 도메인 또는 미리보기 브랜치 주소를 정확히 허용합니다. 추가 운영 도메인이 있으면 Production 환경에 `APP_ORIGIN=https://실제도메인`을 설정합니다. 로그인 쿠키는 HTTPS 전용이며 알 수 없는 호스트와 다른 출처의 요청을 거부합니다. `NEXT_PUBLIC_*`나 `VITE_*` DB 비밀값은 사용하지 않습니다. `SUPABASE_URL`·publishable key는 현재 서버의 DB 저장에 필요하지 않습니다.
+
+빌드·API 구성과 오류 확인 방법: [Vercel 배포 안내](docs/vercel.md).
 
 ## 턴키 검증·재개
 

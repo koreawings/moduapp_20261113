@@ -1,4 +1,4 @@
-name: Verify local MVP
+name: Verify application
 on:
   push:
   pull_request:
